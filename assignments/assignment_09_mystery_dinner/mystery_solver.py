@@ -1,18 +1,18 @@
 """
 Assignment 9: Mystery Dinner Party Solver
-All Concepts - Solve murder mysteries using every prompting technique
-
-Your mission: Become the ultimate AI detective by combining all prompting
-techniques to solve complex murder mysteries!
+All Prompting Techniques Combined
 """
 
 import os
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 from dataclasses import dataclass
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate, FewShotPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
+
+# ---------------- DATA CLASSES ---------------- #
 
 @dataclass
 class Suspect:
@@ -54,134 +54,243 @@ class Solution:
     alternative_theories: List[str]
 
 
+# ---------------- DETECTIVE ---------------- #
+
 class MysteryDetective:
     """
-    AI detective using all prompting techniques to solve mysteries.
+    AI detective using zero-shot, few-shot, and CoT prompting.
     """
 
     def __init__(self, model_name: str = "gpt-4o-mini"):
         self.llm = ChatOpenAI(model=model_name, temperature=0.3)
-        self.profiler = None  # Zero-shot
-        self.clue_analyzer = None  # Few-shot
-        self.timeline_builder = None  # CoT
-        self.solver = None  # Combined
         self._setup_chains()
 
+    # ---------------- SETUP CHAINS ---------------- #
+
     def _setup_chains(self):
-        """
-        TODO #1: Set up chains for each aspect of mystery solving.
 
-        Create:
-        1. Zero-shot profiler for psychological analysis
-        2. Few-shot clue analyzer with pattern examples
-        3. CoT timeline builder for alibi checking
-        4. Combined solver for final deduction
-        """
+        # ZERO-SHOT: Psychological profiling
+        self.profile_chain = (
+            PromptTemplate.from_template(
+                """
+Psychologically analyze this murder suspect.
 
-        # TODO: Zero-shot for suspect profiling
-        profile_template = PromptTemplate.from_template(
-            """Psychologically profile this suspect.
+Tasks:
+- Estimate deception likelihood (0–1)
+- Estimate motive strength (0–1)
+- Provide brief psychological profile
 
-[TODO: Add instructions for:
-- Behavioral analysis
-- Deception indicators
-- Motive strength assessment]
+Suspect:
+{suspect}
 
-Suspect Info: {suspect_info}
-
-Profile:"""
+Respond ONLY in JSON:
+{{
+  "deception": 0.0,
+  "motive_strength": 0.0,
+  "profile": "..."
+}}
+"""
+            )
+            | self.llm
+            | StrOutputParser()
         )
 
-        # TODO: Few-shot for clue patterns
-        clue_examples = [
+        # FEW-SHOT: Clue pattern analysis
+        examples = [
             {
                 "clue": "Lipstick on wine glass",
-                "analysis": "Indicates female presence, check color against suspects' cosmetics",
-                "significance": "high",
+                "analysis": "Suggests close contact, possibly romantic or intimate",
+                "importance": "high",
             },
-            # TODO: Add more clue analysis examples
+            {
+                "clue": "Broken watch at crime scene",
+                "analysis": "Time discrepancy may indicate struggle",
+                "importance": "medium",
+            },
         ]
 
-        # TODO: CoT for timeline reconstruction
-        timeline_template = PromptTemplate.from_template(
-            """Reconstruct the timeline of events step by step.
-
-Alibis: {alibis}
-Time of Death: {tod}
-Witness Statements: {witnesses}
-
-Let's trace each person's movements step by step:"""
+        self.clue_chain = (
+            FewShotPromptTemplate(
+                examples=examples,
+                example_prompt=PromptTemplate.from_template(
+                    "Clue: {clue}\nAnalysis: {analysis}\nImportance: {importance}\n"
+                ),
+                prefix="Analyze the following clue based on known patterns.\n\n",
+                suffix="Clue: {clue}\nAnalysis:",
+                input_variables=["clue"],
+            )
+            | self.llm
+            | StrOutputParser()
         )
 
-        # TODO: Initialize all chains
-        pass
+        # CoT: Timeline reconstruction
+        self.timeline_chain = (
+            PromptTemplate.from_template(
+                """
+Reconstruct the murder timeline step by step.
+
+Alibis:
+{alibis}
+
+Witness Statements:
+{witnesses}
+
+Time of Death: {tod}
+
+Determine which alibis are suspicious.
+
+Respond ONLY in JSON:
+{{
+  "results": {{
+    "Suspect Name": true/false
+  }}
+}}
+
+Let's think step by step.
+"""
+            )
+            | self.llm
+            | StrOutputParser()
+        )
+
+        # FINAL SOLVER (combined)
+        self.solve_chain = (
+            PromptTemplate.from_template(
+                """
+Solve the murder mystery using all available information.
+
+Victim: {victim}
+Scene: {scene}
+Time of Death: {tod}
+
+Suspects:
+{suspects}
+
+Clues:
+{clues}
+
+Alibi Verification:
+{alibis}
+
+Provide final deduction.
+
+Respond ONLY in JSON:
+{{
+  "murderer": "...",
+  "motive": "...",
+  "method": "...",
+  "reasoning": ["step 1", "step 2"],
+  "confidence": 0.0
+}}
+"""
+            )
+            | self.llm
+            | StrOutputParser()
+        )
+
+    # ---------------- ZERO-SHOT PROFILING ---------------- #
 
     def profile_suspect(self, suspect: Suspect) -> Dict[str, any]:
-        """
-        TODO #2: Profile suspect using zero-shot analysis.
+        text = f"""
+Name: {suspect.name}
+Background: {suspect.background}
+Alibi: {suspect.alibi}
+Motive: {suspect.motive}
+Behavior: {', '.join(suspect.suspicious_behavior)}
+"""
 
-        Psychological profiling without examples.
-        """
+        response = self.profile_chain.invoke({"suspect": text})
+        cleaned = response.replace("```json", "").replace("```", "").strip()
 
-        # TODO: Implement psychological profiling
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            data = {}
 
         return {
-            "deception_likelihood": 0.0,
-            "motive_strength": 0.0,
-            "psychological_profile": "",
+            "deception_likelihood": data.get("deception", 0.5),
+            "motive_strength": data.get("motive_strength", 0.5),
+            "psychological_profile": data.get("profile", ""),
         }
 
+    # ---------------- FEW-SHOT CLUES ---------------- #
+
     def analyze_clues(self, clues: List[Clue]) -> List[Dict[str, any]]:
-        """
-        TODO #3: Analyze clues using few-shot pattern matching.
+        results = []
+        for clue in clues:
+            analysis = self.clue_chain.invoke({"clue": clue.description})
+            results.append(
+                {
+                    "clue": clue.description,
+                    "analysis": analysis.strip(),
+                    "suspects": clue.related_suspects,
+                }
+            )
+        return results
 
-        Match against known clue patterns.
-        """
-
-        # TODO: Implement clue pattern analysis
-
-        return []
+    # ---------------- CoT ALIBI CHECK ---------------- #
 
     def verify_alibis(self, case: MysteryCase) -> Dict[str, bool]:
-        """
-        TODO #4: Verify alibis using CoT timeline reasoning.
+        alibis = {s.name: s.alibi for s in case.suspects}
 
-        Step-by-step timeline reconstruction.
-        """
+        response = self.timeline_chain.invoke(
+            {
+                "alibis": json.dumps(alibis, indent=2),
+                "witnesses": case.witness_statements,
+                "tod": case.time_of_death,
+            }
+        )
 
-        # TODO: Implement timeline verification
+        cleaned = response.replace("```json", "").replace("```", "").strip()
 
-        return {}
+        try:
+            return json.loads(cleaned)["results"]
+        except Exception:
+            return {s.name: False for s in case.suspects}
+
+    # ---------------- FINAL SOLUTION ---------------- #
 
     def solve_mystery(self, case: MysteryCase) -> Solution:
-        """
-        TODO #5: Solve the mystery using ALL techniques.
+        profiles = {
+            s.name: self.profile_suspect(s) for s in case.suspects
+        }
+        alibi_check = self.verify_alibis(case)
+        clues = self.analyze_clues(case.clues)
 
-        Combine all methods for final solution.
-        """
+        response = self.solve_chain.invoke(
+            {
+                "victim": case.victim,
+                "scene": case.crime_scene,
+                "tod": case.time_of_death,
+                "suspects": json.dumps(profiles, indent=2),
+                "clues": json.dumps(clues, indent=2),
+                "alibis": json.dumps(alibi_check, indent=2),
+            }
+        )
 
-        # TODO: Orchestrate all techniques:
-        # 1. Profile all suspects (zero-shot)
-        # 2. Analyze clues (few-shot)
-        # 3. Verify alibis (CoT)
-        # 4. Combine evidence (all)
-        # 5. Reach conclusion
+        cleaned = response.replace("```json", "").replace("```", "").strip()
+
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            data = {}
 
         return Solution(
-            murderer="",
-            motive="",
-            method="",
-            reasoning_chain=[],
+            murderer=data.get("murderer", "Unknown"),
+            motive=data.get("motive", ""),
+            method=data.get("method", ""),
+            reasoning_chain=data.get("reasoning", []),
             evidence_links={},
-            confidence=0.0,
+            confidence=data.get("confidence", 0.5),
             alternative_theories=[],
         )
 
 
+# ---------------- TEST ---------------- #
+
 def test_detective():
     detective = MysteryDetective()
 
-    # Create a test mystery case
     test_case = MysteryCase(
         victim="Lord Wellington",
         crime_scene="Library",
@@ -237,43 +346,12 @@ def test_detective():
 
     print("🕵️ MYSTERY DINNER PARTY SOLVER 🕵️")
     print("=" * 70)
-    print(f"Victim: {test_case.victim}")
-    print(f"Scene: {test_case.crime_scene}")
-    print(f"Time of Death: {test_case.time_of_death}")
-    print("-" * 70)
 
-    # Test each component
-    print("\n🔍 SUSPECT PROFILES (Zero-shot):")
-    for suspect in test_case.suspects:
-        profile = detective.profile_suspect(suspect)
-        print(f"\n{suspect.name}:")
-        print(f"  Deception: {profile.get('deception_likelihood', 0):.0%}")
-        print(f"  Motive Strength: {profile.get('motive_strength', 0):.0%}")
-
-    print("\n🔎 CLUE ANALYSIS (Few-shot):")
-    clue_analysis = detective.analyze_clues(test_case.clues)
-    for i, clue in enumerate(test_case.clues):
-        print(f"  • {clue.description}")
-
-    print("\n⏰ ALIBI VERIFICATION (Chain of Thought):")
-    alibi_results = detective.verify_alibis(test_case)
-    for name, verified in alibi_results.items():
-        status = "✓ Verified" if verified else "✗ Suspicious"
-        print(f"  {name}: {status}")
-
-    print("\n🎯 FINAL SOLUTION (All Techniques):")
-    print("=" * 70)
     solution = detective.solve_mystery(test_case)
-
-    print(f"The Murderer: {solution.murderer}")
+    print(f"Murderer: {solution.murderer}")
     print(f"Motive: {solution.motive}")
     print(f"Method: {solution.method}")
     print(f"Confidence: {solution.confidence:.0%}")
-
-    if solution.reasoning_chain:
-        print("\nReasoning:")
-        for step in solution.reasoning_chain[:3]:
-            print(f"  → {step}")
 
 
 if __name__ == "__main__":
