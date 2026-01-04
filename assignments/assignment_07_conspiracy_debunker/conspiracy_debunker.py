@@ -1,18 +1,18 @@
 """
 Assignment 7: Conspiracy Theory Debunker
-Zero-Shot + Chain of Thought - Analyze and debunk misinformation
-
-Your mission: Combat misinformation by analyzing conspiracy theories
-with clear instructions and step-by-step logical reasoning!
+Zero-Shot + Chain of Thought for Critical Analysis
 """
 
 import os
 import json
-from typing import Dict, List, Optional
+from typing import List
 from dataclasses import dataclass
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
+
+# ---------------- DATA CLASS ---------------- #
 
 @dataclass
 class DebunkAnalysis:
@@ -26,6 +26,8 @@ class DebunkAnalysis:
     confidence_score: float
 
 
+# ---------------- DEBUNKER ---------------- #
+
 class ConspiracyDebunker:
     """
     AI-powered conspiracy theory analyzer using zero-shot + CoT.
@@ -33,53 +35,74 @@ class ConspiracyDebunker:
 
     def __init__(self, model_name: str = "gpt-4o-mini"):
         self.llm = ChatOpenAI(model=model_name, temperature=0.2)
-        self.analysis_chain = None
         self._setup_chains()
 
+    # ---------------- TODO 1 ---------------- #
     def _setup_chains(self):
         """
-        TODO #1: Create zero-shot CoT chain for conspiracy analysis.
-
-        Combine clear instructions with "let's think step by step"
+        Zero-shot Chain-of-Thought prompt
         """
 
-        template = PromptTemplate.from_template(
-            """Analyze this conspiracy theory respectfully but critically.
+        self.prompt = PromptTemplate.from_template(
+            """
+You are an expert in critical thinking and misinformation analysis.
+Analyze the conspiracy theory below respectfully and logically.
 
-[TODO: Add zero-shot instructions for:
-- Claim extraction
-- Logical flaw identification  
-- Step-by-step reasoning (CoT)
-- Respectful tone]
+Tasks:
+1. Extract the main factual claims
+2. Identify logical flaws or fallacies
+3. Explain reasoning step by step
+4. Explain why people may find it appealing
+5. Debunk the theory using facts
+6. Suggest reliable information sources
 
-Theory: {conspiracy_text}
+Respond ONLY in valid JSON.
 
-Let's think step by step:"""
+JSON format:
+{{
+  "main_claims": ["..."],
+  "logical_flaws": ["..."],
+  "reasoning_chain": ["step 1", "step 2"],
+  "psychological_appeal": "...",
+  "debunking_summary": "...",
+  "reliable_sources": ["..."],
+  "confidence_score": 0.0
+}}
+
+Conspiracy theory:
+{conspiracy_text}
+
+Let's think step by step.
+"""
         )
 
-        # TODO: Set up the chain
-        pass
+        self.analysis_chain = self.prompt | self.llm | StrOutputParser()
 
+    # ---------------- TODO 2 ---------------- #
     def debunk(self, conspiracy_text: str) -> DebunkAnalysis:
-        """
-        TODO #2: Analyze and debunk conspiracy theory.
+        response = self.analysis_chain.invoke(
+            {"conspiracy_text": conspiracy_text}
+        )
 
-        Use zero-shot for novel analysis + CoT for reasoning
-        """
-
-        # TODO: Implement analysis combining both techniques
+        # --- SAFE JSON PARSING ---
+        try:
+            data = json.loads(response)
+        except json.JSONDecodeError:
+            data = {}
 
         return DebunkAnalysis(
             conspiracy_text=conspiracy_text,
-            main_claims=[],
-            logical_flaws=[],
-            reasoning_chain=[],
-            psychological_appeal="",
-            debunking_summary="",
-            reliable_sources=[],
-            confidence_score=0.0,
+            main_claims=data.get("main_claims", []),
+            logical_flaws=data.get("logical_flaws", []),
+            reasoning_chain=data.get("reasoning_chain", []),
+            psychological_appeal=data.get("psychological_appeal", ""),
+            debunking_summary=data.get("debunking_summary", ""),
+            reliable_sources=data.get("reliable_sources", []),
+            confidence_score=data.get("confidence_score", 0.5),
         )
 
+
+# ---------------- TEST ---------------- #
 
 def test_debunker():
     debunker = ConspiracyDebunker()
